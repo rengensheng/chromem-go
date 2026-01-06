@@ -568,7 +568,7 @@ func (c *Collection) queryEmbedding(ctx context.Context, queryEmbedding, negativ
 	c.documentsLock.RLock()
 	defer c.documentsLock.RUnlock()
 	if nResults > len(c.documents) {
-		return nil, errors.New("nResults must be <= the number of documents in the collection")
+		nResults = len(c.documents)
 	}
 
 	if len(c.documents) == 0 {
@@ -671,4 +671,96 @@ func makePartialDocument(doc *Document) *Document {
 	docCopy.Metadata = nil
 	docCopy.Embedding = nil
 	return &docCopy
+}
+
+// Search performs an exhaustive nearest neighbor search on the collection.
+//
+//   - searchText: The text to search for. Its embedding will be created using the
+//     collection's embedding function.
+//   - nResults: The maximum number of results to return. Must be > 0.
+//     There can be fewer results if a filter is applied.
+//   - where: Conditional filtering on metadata. Optional.
+//   - whereDocument: Conditional filtering on documents. Optional.
+func (c *Collection) Search(ctx context.Context, searchText string, nResults int, filter func(d *Document) bool) ([]Result, error) {
+	if searchText == "" {
+		return nil, errors.New("searchText is empty")
+	}
+
+	searchVector, err := c.embed(ctx, searchText)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't create embedding of search: %w", err)
+	}
+
+	return c.SearchEmbedding(ctx, searchVector, nResults, filter)
+}
+
+// SearchEmbedding performs an exhaustive nearest neighbor search on the collection.
+//
+//   - searchEmbedding: The embedding of the search to search for. It must be created
+//     with the same embedding model as the document embeddings in the collection.
+//     The embedding will be normalized if it's not the case yet.
+//   - nResults: The maximum number of results to return. Must be > 0.
+//     There can be fewer results if a filter is applied.
+//   - where: Conditional filtering on metadata. Optional.
+//   - whereDocument: Conditional filtering on documents. Optional.
+func (c *Collection) SearchEmbedding(ctx context.Context, searchEmbedding []float32, nResults int, filter func(d *Document) bool) ([]Result, error) {
+	return c.searchEmbedding(ctx, searchEmbedding, nil, 0, nResults, filter)
+}
+
+// searchEmbedding performs an exhaustive nearest neighbor search on the collection.
+func (c *Collection) searchEmbedding(ctx context.Context, searchEmbedding, negativeEmbeddings []float32, negativeFilterThreshold float32, nResults int, filter func(d *Document) bool) ([]Result, error) {
+	if len(searchEmbedding) == 0 {
+		return nil, errors.New("searchEmbedding is empty")
+	}
+	if nResults <= 0 {
+		return nil, errors.New("nResults must be > 0")
+	}
+	c.documentsLock.RLock()
+	defer c.documentsLock.RUnlock()
+	if nResults > len(c.documents) {
+		nResults = len(c.documents)
+	}
+
+	if len(c.documents) == 0 {
+		return nil, nil
+	}
+	// Filter docs by metadata and content
+	filteredDocs := filterDocument(c.documents, filter)
+
+	// No need to continue if the filters got rid of all documents
+	if len(filteredDocs) == 0 {
+		return nil, nil
+	}
+
+	// Normalize embedding if not the case yet. We only support cosine similarity
+	// for now and all documents were already normalized when added to the collection.
+	if !isNormalized(searchEmbedding) {
+		searchEmbedding = normalizeVector(searchEmbedding)
+	}
+
+	// If the filtering already reduced the number of documents to fewer than nResults,
+	// we only need to find the most similar docs among the filtered ones.
+	resLen := nResults
+	if len(filteredDocs) < nResults {
+		resLen = len(filteredDocs)
+	}
+
+	// For the remaining documents, get the most similar docs.
+	nMaxDocs, err := getMostSimilarDocs(ctx, searchEmbedding, negativeEmbeddings, negativeFilterThreshold, filteredDocs, resLen)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get most similar docs: %w", err)
+	}
+
+	res := make([]Result, 0, len(nMaxDocs))
+	for i := 0; i < len(nMaxDocs); i++ {
+		res = append(res, Result{
+			ID:         nMaxDocs[i].docID,
+			Metadata:   c.documents[nMaxDocs[i].docID].Metadata,
+			Embedding:  c.documents[nMaxDocs[i].docID].Embedding,
+			Content:    c.documents[nMaxDocs[i].docID].Content,
+			Similarity: nMaxDocs[i].similarity,
+		})
+	}
+
+	return res, nil
 }

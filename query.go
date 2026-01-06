@@ -85,6 +85,12 @@ func (d *maxDocSims) values() []docSim {
 // filterDocs filters a map of documents by metadata and content.
 // It does this concurrently.
 func filterDocs(docs map[string]*Document, where, whereDocument map[string]string) []*Document {
+	return filterDocument(docs, func(d *Document) bool {
+		return documentMatchesFilters(d, where, whereDocument)
+	})
+}
+
+func filterDocument(docs map[string]*Document, filter func(d *Document) bool) []*Document {
 	filteredDocs := make([]*Document, 0, len(docs))
 	filteredDocsLock := sync.Mutex{}
 
@@ -104,7 +110,7 @@ func filterDocs(docs map[string]*Document, where, whereDocument map[string]strin
 		go func() {
 			defer wg.Done()
 			for doc := range docChan {
-				if documentMatchesFilters(doc, where, whereDocument) {
+				if filter == nil || filter(doc) {
 					filteredDocsLock.Lock()
 					filteredDocs = append(filteredDocs, doc)
 					filteredDocsLock.Unlock()
