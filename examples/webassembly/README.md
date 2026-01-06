@@ -11,5 +11,5 @@ Go can compile to WebAssembly, which you can then use from JavaScript in a Brows
    1. `cp $(go env GOROOT)/misc/wasm/wasm_exec.js ../examples/webassembly/wasm_exec.js`
 3. Serve the files
    1. `cd ../examples/webassembly`
-   2. `go run github.com/philippgille/serve@latest -b localhost -p 8080` or similar
+   2. `go run github.com/rengensheng/serve@latest -b localhost -p 8080` or similar
 4. Open <http://localhost:8080> in your browser
