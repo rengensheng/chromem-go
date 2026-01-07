@@ -764,3 +764,22 @@ func (c *Collection) searchEmbedding(ctx context.Context, searchEmbedding, negat
 
 	return res, nil
 }
+
+func (c *Collection) GetList(ctx context.Context, filter func(d *Document) bool) []Document {
+	c.documentsLock.RLock()
+	defer c.documentsLock.RUnlock()
+
+	filteredDocs := filterDocument(c.documents, filter)
+
+	res := make([]Document, 0, len(filteredDocs))
+	for _, doc := range filteredDocs {
+		res = append(res, Document{
+			ID:        doc.ID,
+			Metadata:  doc.Metadata,
+			Embedding: doc.Embedding,
+			Content:   doc.Content,
+		})
+	}
+
+	return res
+}
